@@ -50,7 +50,7 @@ Progress is saved to SQLite. Interrupt with Ctrl+C and re-run to resume: already
 ## What it does
 
 1. **Search** — broad Gmail query for subscription / renewal / trial / recurring-charge language (`newer_than:5y`).
-2. **Stage 1 (MLX, batched)** — classifies metadata only (sender, subject, snippet) in batches of 96. High recall: uncertain or failed screens are kept.
+2. **Stage 1 (MLX)** — classifies metadata only (sender, subject, snippet) in small batches of 8. If Metal runs out of memory it switches to one email at a time instead of retrying into a full GPU. High recall: uncertain or failed screens are kept.
 3. **Stage 2 (Ollama 8B)** — fetches the body and extracts merchant, amount, cadence, risk, and evidence **only** for emails Stage 1 marked interesting.
 
 ## Outputs (local, gitignored)

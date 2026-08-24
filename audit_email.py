@@ -44,9 +44,11 @@ FAST_MLX_MODEL = "mlx-community/Qwen3-4B-4bit"
 # Stage 2: larger local model, interesting emails only.
 DEEP_MODEL = "qwen3:8b"
 
-# Stage 1: independent previews per Metal batch (64–128).
-FAST_BATCH_SIZE = 96
-FAST_BATCH_SIZE_MIN = 32
+# Stage 1 must stay small on unified memory. 96-wide batches plus
+# split-on-OOM retries can jetsam the Mac.
+FAST_BATCH_SIZE = 8
+FAST_PREFILL_SIZE = 4
+SCREEN_MAX_TOKENS = 96
 
 # Keep unless the screen is clearly irrelevant.
 KEEP_THRESHOLD = 0.55
@@ -479,7 +481,7 @@ def call_ollama(
                     "stream": False,
                     "think": False,
                     "format": "json",
-                    "keep_alive": "30m",
+                    "keep_alive": "2m",
 
                     "options": {
                         "temperature": 0,
@@ -559,15 +561,50 @@ def load_fast_mlx_model():
     return model, tokenizer
 
 
-def unload_mlx_model(model):
-    del model
+def clear_mlx_memory():
     gc.collect()
 
     try:
         import mlx.core as mx
         mx.clear_cache()
+        mx.synchronize()
     except Exception:
         pass
+
+
+def unload_mlx_model(model):
+    del model
+    clear_mlx_memory()
+
+
+def unload_ollama():
+    """
+    Drop the Stage 2 weights from RAM before MLX Stage 1.
+    """
+
+    try:
+        requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": DEEP_MODEL,
+                "prompt": "",
+                "keep_alive": 0
+            },
+            timeout=10
+        )
+    except Exception:
+        pass
+
+
+def is_memory_error(error):
+    message = str(error).lower()
+
+    return (
+        isinstance(error, MemoryError)
+        or "insufficient memory" in message
+        or "out of memory" in message
+        or "failed to allocate" in message
+    )
 
 
 def extract_json_object(text):
@@ -805,36 +842,53 @@ def _mlx_stop_tokens(tokenizer):
     return []
 
 
-def _mlx_batch_texts(model, tokenizer, prompts, max_tokens=160):
-    """
-    Batched generation without mlx-lm's stats() helper.
+_screen_one_at_a_time = False
 
-    batch_generate() divides token counts by elapsed time and raises
-    ZeroDivisionError when prompt_time or generation_time is 0.
+
+def _mlx_generate_one(model, tokenizer, prompt_tokens, max_tokens):
+    from mlx_lm import generate
+    from mlx_lm.sample_utils import make_sampler
+
+    return generate(
+        model,
+        tokenizer,
+        prompt=prompt_tokens,
+        max_tokens=max_tokens,
+        sampler=make_sampler(temp=0.0),
+        verbose=False
+    )
+
+
+def _mlx_batch_texts(model, tokenizer, prompts, max_tokens=SCREEN_MAX_TOKENS):
+    """
+    Tiny Metal batches. Never pad completion size above the real prompt count.
     """
 
     from mlx_lm.generate import BatchGenerator
     from mlx_lm.sample_utils import make_sampler
 
-    gen = BatchGenerator(
-        model,
-        stop_tokens=_mlx_stop_tokens(tokenizer),
-        sampler=make_sampler(temp=0.0),
-        prefill_batch_size=min(32, len(prompts)),
-        completion_batch_size=min(96, max(len(prompts), 32)),
-    )
-
-    uids = gen.insert(
-        prompts,
-        [max_tokens] * len(prompts)
-    )
-
-    collected = {
-        uid: []
-        for uid in uids
-    }
+    n = len(prompts)
+    gen = None
 
     try:
+        gen = BatchGenerator(
+            model,
+            stop_tokens=_mlx_stop_tokens(tokenizer),
+            sampler=make_sampler(temp=0.0),
+            prefill_batch_size=min(FAST_PREFILL_SIZE, n),
+            completion_batch_size=n,
+        )
+
+        uids = gen.insert(
+            prompts,
+            [max_tokens] * n
+        )
+
+        collected = {
+            uid: []
+            for uid in uids
+        }
+
         while True:
             responses = gen.next_generated()
 
@@ -847,13 +901,34 @@ def _mlx_batch_texts(model, tokenizer, prompts, max_tokens=160):
                         response.token
                     )
 
-    finally:
-        gen.close()
+        return [
+            tokenizer.decode(collected[uid])
+            for uid in uids
+        ]
 
-    return [
-        tokenizer.decode(collected[uid])
-        for uid in uids
-    ]
+    finally:
+        if gen is not None:
+            gen.close()
+        clear_mlx_memory()
+
+
+def _screen_one(model, tokenizer, preview):
+    prompt = encode_screen_prompt(tokenizer, preview)
+
+    try:
+        text = _mlx_generate_one(
+            model,
+            tokenizer,
+            prompt,
+            SCREEN_MAX_TOKENS
+        )
+    finally:
+        clear_mlx_memory()
+
+    return parse_screen_result(
+        text,
+        preview["gmail_id"]
+    )
 
 
 def _screen_batch_once(model, tokenizer, previews):
@@ -866,7 +941,7 @@ def _screen_batch_once(model, tokenizer, previews):
         model,
         tokenizer,
         prompts,
-        max_tokens=160
+        max_tokens=SCREEN_MAX_TOKENS
     )
 
     return [
@@ -877,12 +952,53 @@ def _screen_batch_once(model, tokenizer, previews):
 
 def screen_batch(model, tokenizer, previews):
     """
-    One short prompt per email, batched on MLX.
-    Email contents stay in-process.
+    One short prompt per email. Email contents stay in-process.
+
+    On Metal OOM, switch to one-at-a-time generation for the rest of
+    the run. Never split-and-retry into a full GPU.
     """
+
+    global _screen_one_at_a_time
 
     if not previews:
         return []
+
+    if _screen_one_at_a_time:
+        results = []
+
+        for preview in previews:
+            try:
+                results.append(
+                    _screen_one(model, tokenizer, preview)
+                )
+            except Exception as error:
+                if is_memory_error(error):
+                    clear_mlx_memory()
+                    print(
+                        f"    Memory still exhausted on "
+                        f"{preview['gmail_id']}; keeping as uncertain."
+                    )
+                    results.append(
+                        parse_screen_result(
+                            "",
+                            preview["gmail_id"]
+                        )
+                    )
+                    time.sleep(1)
+                    continue
+
+                print(
+                    f"    Screen failed for "
+                    f"{preview['gmail_id']}: {error}"
+                )
+                results.append(
+                    parse_screen_result(
+                        "",
+                        preview["gmail_id"]
+                    )
+                )
+
+        return results
 
     try:
         return _screen_batch_once(
@@ -892,40 +1008,27 @@ def screen_batch(model, tokenizer, previews):
         )
 
     except Exception as error:
+        clear_mlx_memory()
 
-        if len(previews) > 1:
-            mid = max(1, len(previews) // 2)
-
+        if is_memory_error(error):
+            _screen_one_at_a_time = True
+            print()
             print(
-                f"    MLX batch failed "
-                f"({len(previews)}): {error}. "
-                f"Retrying as {mid} + "
-                f"{len(previews) - mid}..."
+                "    Metal ran out of memory. Switching Stage 1 "
+                "to one email at a time so the Mac does not panic."
             )
-
-            return (
-                screen_batch(
-                    model,
-                    tokenizer,
-                    previews[:mid]
-                )
-                + screen_batch(
-                    model,
-                    tokenizer,
-                    previews[mid:]
-                )
-            )
+            print()
+            time.sleep(1)
+            return screen_batch(model, tokenizer, previews)
 
         print(
-            f"    Screen failed for "
-            f"{previews[0]['gmail_id']}: {error}"
+            f"    MLX batch failed "
+            f"({len(previews)}): {error}"
         )
 
         return [
-            parse_screen_result(
-                "",
-                previews[0]["gmail_id"]
-            )
+            parse_screen_result("", preview["gmail_id"])
+            for preview in previews
         ]
 
 
@@ -1422,6 +1525,10 @@ def run_screening(
     print("=" * 70)
     print("STAGE 1 — FAST SCREENING WITH LOCAL MLX")
     print("=" * 70)
+    print(
+        f"Batch size: {FAST_BATCH_SIZE} "
+        "(falls back to 1 on Metal OOM)"
+    )
 
     pending_previews = []
 
@@ -2281,6 +2388,12 @@ def main():
                 f"Stage 1 pending previews: "
                 f"{pending_screen}"
             )
+
+            print(
+                "Releasing Ollama weights from RAM "
+                "before MLX Stage 1..."
+            )
+            unload_ollama()
 
             loaded = load_fast_mlx_model()
 
