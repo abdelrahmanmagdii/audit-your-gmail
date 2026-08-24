@@ -1,0 +1,25 @@
+# Gmail OAuth — never commit
+credentials.json
+token.json
+client_secret*.json
+
+# Local audit data
+*.db
+*.sqlite
+*.sqlite3
+subscription_report.csv
+subscription_timeline.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
