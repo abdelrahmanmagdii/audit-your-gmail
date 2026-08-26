@@ -2,6 +2,7 @@
 credentials.json
 token.json
 client_secret*.json
+.gmail-audit.json
 
 # Local audit data
 *.db
@@ -9,6 +10,8 @@ client_secret*.json
 *.sqlite3
 subscription_report.csv
 subscription_timeline.csv
+stage1_interesting.csv
+stage1_*.csv
 
 # Python
 __pycache__/

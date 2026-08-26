@@ -1,0 +1,7 @@
+date,merchant,event_type,status,amount,currency,cadence,risk,subject,summary,evidence
+2026-07-12T09:14:00+00:00,Example Stream,price_change,active,15.99,USD,monthly,medium,Your plan is changing,Plan rising from $12.99 to $15.99 next cycle,Your next bill will be $15.99
+2026-07-12T09:14:00+00:00,Example Stream,active_renewal,active,15.99,USD,monthly,low,Receipt: Example Stream,Monthly renewal charged,We've renewed your subscription
+2026-06-01T16:02:00+00:00,Example Cloud,active_renewal,active,12.00,USD,monthly,low,Payment received,Workspace seat billed,$12.00 USD
+2026-04-28T18:30:00+00:00,Example Trial,trial_ending,trial,0.00,USD,monthly,high,Your trial ends in 3 days,Trial converts unless cancelled,Your trial ends on May 1
+2025-11-20T12:00:00+00:00,Example News,cancellation,cancelled,99.00,USD,annual,low,You're cancelled,Annual plan ended,Your subscription has been cancelled
+2026-08-15T08:00:00+00:00,Example Gym,active_renewal,active,49.00,USD,monthly,medium,Membership renewed,Club dues charged,To cancel call during business hours

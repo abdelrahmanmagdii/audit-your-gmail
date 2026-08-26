@@ -37,9 +37,13 @@ TIMELINE_CSV = "subscription_timeline.csv"
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
-# Stage 1: local MLX batched inference on Apple Silicon.
-# One short prompt per email; never send mail to a remote API.
+# Stage 1 default: Ollama (macOS / Windows / Linux).
+# MLX is optional on Apple Silicon (`gmail-audit run --backend mlx`).
+STAGE1_BACKEND = "ollama"
+FAST_OLLAMA_MODEL = "qwen2.5:3b"
 FAST_MLX_MODEL = "mlx-community/Qwen3-4B-4bit"
+MESSAGE_LIMIT = None
+_RUNTIME_CONFIG_APPLIED = False
 
 # Stage 2: larger local model, interesting emails only.
 DEEP_MODEL = "qwen3:8b"
@@ -61,7 +65,7 @@ DEEP_BATCH_SIZE = 4
 MAX_DEEP_BODY_CHARS = 6000
 
 # Gmail search intentionally remains reasonably broad.
-# Local MLX Stage 1 does the intelligent filtering.
+# Local Stage 1 does the intelligent filtering.
 SEARCH_QUERY = """
 newer_than:5y {
     "subscription"
@@ -124,6 +128,92 @@ def chunks(items, size):
         yield items[i:i + size]
 
 
+def apply_runtime_config(
+    backend=None,
+    fast_model=None,
+    deep_model=None,
+    limit=None
+):
+    """
+    Load `.gmail-audit.json` from setup, then apply CLI overrides.
+    """
+
+    global STAGE1_BACKEND
+    global FAST_OLLAMA_MODEL
+    global DEEP_MODEL
+    global FAST_MLX_MODEL
+    global MESSAGE_LIMIT
+    global _RUNTIME_CONFIG_APPLIED
+
+    saved = None
+    recommended = None
+
+    try:
+        from gmail_audit.hardware import detect_machine
+        from gmail_audit.recommend import (
+            load_saved_config,
+            recommend_models
+        )
+
+        saved = load_saved_config()
+        recommended = recommend_models(
+            detect_machine()
+        )
+    except Exception:
+        pass
+
+    if saved:
+        STAGE1_BACKEND = saved.get(
+            "backend",
+            STAGE1_BACKEND
+        )
+        FAST_OLLAMA_MODEL = saved.get(
+            "fast_model",
+            FAST_OLLAMA_MODEL
+        )
+        DEEP_MODEL = saved.get(
+            "deep_model",
+            DEEP_MODEL
+        )
+        if saved.get("mlx_model"):
+            FAST_MLX_MODEL = saved["mlx_model"]
+    elif recommended:
+        FAST_OLLAMA_MODEL = recommended["fast_model"]
+        DEEP_MODEL = recommended["deep_model"]
+
+    if backend:
+        STAGE1_BACKEND = backend
+
+    if fast_model:
+        FAST_OLLAMA_MODEL = fast_model
+
+    if deep_model:
+        DEEP_MODEL = deep_model
+
+    if limit is not None:
+        MESSAGE_LIMIT = limit
+
+    if STAGE1_BACKEND == "mlx":
+        import platform
+
+        apple = (
+            platform.system() == "Darwin"
+            and platform.machine().lower() in (
+                "arm64",
+                "aarch64"
+            )
+        )
+
+        if not apple:
+            print(
+                "MLX is Apple Silicon only. "
+                "Using Ollama for Stage 1."
+            )
+            STAGE1_BACKEND = "ollama"
+
+    _RUNTIME_CONFIG_APPLIED = True
+
+
 # ============================================================
 # GMAIL AUTH
 # ============================================================
@@ -168,16 +258,23 @@ def get_gmail_service():
 # GMAIL SEARCH
 # ============================================================
 
-def search_gmail(service):
+def search_gmail(service, limit=None):
     message_ids = []
     page_token = None
 
     while True:
+        page_size = 500
+
+        if limit:
+            remaining = limit - len(message_ids)
+            if remaining <= 0:
+                break
+            page_size = min(500, remaining)
 
         kwargs = {
             "userId": "me",
             "q": SEARCH_QUERY,
-            "maxResults": 500
+            "maxResults": page_size
         }
 
         if page_token:
@@ -192,6 +289,9 @@ def search_gmail(service):
 
         for message in response.get("messages", []):
             message_ids.append(message["id"])
+
+            if limit and len(message_ids) >= limit:
+                return message_ids[:limit]
 
         page_token = response.get("nextPageToken")
 
@@ -403,7 +503,9 @@ def get_full_email(service, preview):
 # LOCAL INFERENCE — MLX (STAGE 1) + OLLAMA (STAGE 2)
 # ============================================================
 
-def check_ollama():
+def check_ollama(required_models=None):
+    required_models = required_models or [DEEP_MODEL]
+
     try:
         response = requests.get(
             "http://localhost:11434/api/tags",
@@ -424,17 +526,27 @@ def check_ollama():
 
         print("Ollama is running.")
 
-        if not any(
-            name.startswith(DEEP_MODEL)
-            for name in names
-        ):
+        missing = []
+
+        for required in required_models:
+            if not any(
+                name == required
+                or name.startswith(required)
+                for name in names
+            ):
+                missing.append(required)
+
+        if missing:
+            print()
+            print("Missing Ollama model(s):")
+
+            for model in missing:
+                print(
+                    f"  ollama pull {model}"
+                )
 
             print()
-            print("Missing Ollama model:")
-            print(
-                f"  ollama pull {DEEP_MODEL}"
-            )
-
+            print("Or run:  gmail-audit setup")
             return False
 
         return True
@@ -446,7 +558,10 @@ def check_ollama():
         )
 
         print(
-            "Open the Ollama app or run:"
+            "Install from https://ollama.com/download"
+        )
+        print(
+            "then open the Ollama app or run:"
         )
 
         print()
@@ -577,23 +692,30 @@ def unload_mlx_model(model):
     clear_mlx_memory()
 
 
-def unload_ollama():
+def unload_ollama(model=None):
     """
-    Drop the Stage 2 weights from RAM before MLX Stage 1.
+    Drop local Ollama weights from RAM.
     """
 
-    try:
-        requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": DEEP_MODEL,
-                "prompt": "",
-                "keep_alive": 0
-            },
-            timeout=10
-        )
-    except Exception:
-        pass
+    names = (
+        [model]
+        if model
+        else [FAST_OLLAMA_MODEL, DEEP_MODEL]
+    )
+
+    for name in names:
+        try:
+            requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": name,
+                    "prompt": "",
+                    "keep_alive": 0
+                },
+                timeout=10
+            )
+        except Exception:
+            pass
 
 
 def is_memory_error(error):
@@ -826,6 +948,74 @@ def parse_screen_result(text, gmail_id):
         "merchant_hint": obj.get("merchant_hint"),
         "confidence": obj.get("confidence")
     })
+
+
+def screen_batch_ollama(previews):
+    """
+    One preview per Ollama call. Works on Mac, Windows, and Linux.
+    """
+
+    results = []
+
+    for preview in previews:
+        messages = [
+            {
+                "role": "system",
+                "content": FAST_SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": preview_user_content(preview)
+            }
+        ]
+
+        try:
+            payload = call_ollama(
+                FAST_OLLAMA_MODEL,
+                messages,
+                num_ctx=4096,
+                num_predict=SCREEN_MAX_TOKENS
+            )
+
+            if isinstance(payload, dict):
+                text = json.dumps(payload)
+            else:
+                text = str(payload)
+
+            results.append(
+                parse_screen_result(
+                    text,
+                    preview["gmail_id"]
+                )
+            )
+        except Exception as error:
+            print(
+                f"    Screen failed for "
+                f"{preview['gmail_id']}: {error}"
+            )
+            results.append(
+                parse_screen_result(
+                    "",
+                    preview["gmail_id"]
+                )
+            )
+
+    return results
+
+
+def screen_previews(previews, model=None, tokenizer=None):
+    if (
+        STAGE1_BACKEND == "mlx"
+        and model is not None
+        and tokenizer is not None
+    ):
+        return screen_batch(
+            model,
+            tokenizer,
+            previews
+        )
+
+    return screen_batch_ollama(previews)
 
 
 def _mlx_stop_tokens(tokenizer):
@@ -1501,10 +1691,10 @@ def flush_screening_batch(
         f"(batch of {len(previews)})..."
     )
 
-    results = screen_batch(
+    results = screen_previews(
+        previews,
         model,
-        tokenizer,
-        previews
+        tokenizer
     )
 
     save_screening_batch(
@@ -1518,17 +1708,32 @@ def run_screening(
     service,
     conn,
     message_ids,
-    model,
-    tokenizer
+    model=None,
+    tokenizer=None
 ):
     print()
     print("=" * 70)
-    print("STAGE 1 — FAST SCREENING WITH LOCAL MLX")
+    if STAGE1_BACKEND == "mlx":
+        print("STAGE 1 — FAST SCREENING WITH LOCAL MLX")
+    else:
+        print("STAGE 1 — FAST SCREENING WITH LOCAL OLLAMA")
     print("=" * 70)
-    print(
-        f"Batch size: {FAST_BATCH_SIZE} "
-        "(falls back to 1 on Metal OOM)"
-    )
+
+    if STAGE1_BACKEND == "mlx":
+        print(
+            f"Model: {FAST_MLX_MODEL}"
+        )
+        print(
+            f"Batch size: {FAST_BATCH_SIZE} "
+            "(falls back to 1 on Metal OOM)"
+        )
+    else:
+        print(
+            f"Model: {FAST_OLLAMA_MODEL}"
+        )
+        print(
+            "One email at a time (safe on CPU and laptops)."
+        )
 
     pending_previews = []
 
@@ -2301,6 +2506,9 @@ def print_high_risk_timelines(rows):
 # ============================================================
 
 def main():
+    if not _RUNTIME_CONFIG_APPLIED:
+        apply_runtime_config()
+
     print()
     print("=" * 70)
     print("LOCAL EMAIL SUBSCRIPTION AUDITOR")
@@ -2309,17 +2517,27 @@ def main():
     print()
     print(
         "AI inference: LOCAL ONLY "
-        "(MLX Stage 1, Ollama Stage 2)"
+        f"(Stage 1 {STAGE1_BACKEND}, Stage 2 Ollama)"
     )
 
-    print(
-        f"Fast model:   {FAST_MLX_MODEL}"
-    )
+    if STAGE1_BACKEND == "mlx":
+        print(
+            f"Fast model:   {FAST_MLX_MODEL}"
+        )
+    else:
+        print(
+            f"Fast model:   {FAST_OLLAMA_MODEL}"
+        )
 
     print(
         f"Deep model:   {DEEP_MODEL} "
         "(interesting emails only)"
     )
+
+    if MESSAGE_LIMIT:
+        print(
+            f"Limit:        {MESSAGE_LIMIT} most recent matches"
+        )
 
     # --------------------------------------------------------
     # Prerequisites
@@ -2332,6 +2550,12 @@ def main():
         print()
         print(
             "ERROR: credentials.json not found."
+        )
+        print(
+            "Run:  gmail-audit setup"
+        )
+        print(
+            "Walkthrough:  docs/setup-gmail.md"
         )
 
         return
@@ -2359,13 +2583,20 @@ def main():
     )
 
     message_ids = search_gmail(
-        gmail
+        gmail,
+        limit=MESSAGE_LIMIT
     )
 
     print(
         f"Gmail candidate emails: "
         f"{len(message_ids)}"
     )
+
+    if MESSAGE_LIMIT:
+        print(
+            "Re-run without --limit to continue "
+            "the rest. Already-screened mail is skipped."
+        )
 
     fast_model = None
     fast_tokenizer = None
@@ -2389,35 +2620,54 @@ def main():
                 f"{pending_screen}"
             )
 
-            print(
-                "Releasing Ollama weights from RAM "
-                "before MLX Stage 1..."
-            )
-            unload_ollama()
-
-            loaded = load_fast_mlx_model()
-
-            if loaded:
-                fast_model, fast_tokenizer = loaded
-
-                run_screening(
-                    gmail,
-                    conn,
-                    message_ids,
-                    fast_model,
-                    fast_tokenizer
-                )
-
-                unload_mlx_model(fast_model)
-                fast_model = None
-                fast_tokenizer = None
-
-            else:
-                print()
+            if STAGE1_BACKEND == "mlx":
                 print(
-                    "Skipping Stage 1 because the "
-                    "local MLX model could not be loaded."
+                    "Releasing Ollama weights from RAM "
+                    "before MLX Stage 1..."
                 )
+                unload_ollama()
+
+                loaded = load_fast_mlx_model()
+
+                if loaded:
+                    fast_model, fast_tokenizer = loaded
+
+                    run_screening(
+                        gmail,
+                        conn,
+                        message_ids,
+                        fast_model,
+                        fast_tokenizer
+                    )
+
+                    unload_mlx_model(fast_model)
+                    fast_model = None
+                    fast_tokenizer = None
+                else:
+                    print()
+                    print(
+                        "Skipping Stage 1 because the "
+                        "local MLX model could not be loaded."
+                    )
+                    print(
+                        "Try:  gmail-audit run --backend ollama"
+                    )
+            else:
+                if not check_ollama(
+                    [FAST_OLLAMA_MODEL]
+                ):
+                    print()
+                    print(
+                        "Skipping Stage 1. "
+                        "Run:  gmail-audit setup"
+                    )
+                else:
+                    run_screening(
+                        gmail,
+                        conn,
+                        message_ids
+                    )
+                    unload_ollama(FAST_OLLAMA_MODEL)
 
         else:
             print()
@@ -2438,10 +2688,10 @@ def main():
             print()
             print(
                 f"Stage 2 needs {pending_deep} "
-                "flagged email(s). Using local 8B..."
+                f"flagged email(s). Using {DEEP_MODEL}..."
             )
 
-            if not check_ollama():
+            if not check_ollama([DEEP_MODEL]):
                 print()
                 print(
                     "Skipping Stage 2. Stage 1 results "

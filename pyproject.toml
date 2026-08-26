@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gmail-audit"
+version = "0.1.0"
+description = "Local Gmail subscription auditor. Mail stays on your machine."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Abdelrahman Magdi" }]
+keywords = ["gmail", "privacy", "local-llm", "subscriptions"]
+dependencies = [
+    "requests",
+    "beautifulsoup4",
+    "google-auth",
+    "google-auth-oauthlib",
+    "google-api-python-client",
+]
+
+[project.optional-dependencies]
+apple = ["mlx", "mlx-lm"]
+
+[project.scripts]
+gmail-audit = "gmail_audit.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/abdelrahmanmagdii/audit-your-gmail"
+
+[tool.setuptools]
+py-modules = ["audit_email"]
+packages = ["gmail_audit"]
