@@ -2,14 +2,15 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import webbrowser
 
 import requests
 
 from gmail_audit.hardware import detect_machine
+from gmail_audit.paths import migrate_and_bind
 
 
-CONFIG_FILE = ".gmail-audit.json"
 OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
 OLLAMA_DOWNLOAD = "https://ollama.com/download"
 
@@ -23,16 +24,46 @@ Google does not let this project ship a shared Gmail login.
 4. OAuth consent: External + Testing. Add YOUR Gmail as a test user.
 5. Add the scope gmail.readonly (Data Access / scopes).
 6. Create an OAuth client ID of type Desktop app.
-7. Download the JSON and save it as credentials.json in this directory.
-
-Full walkthrough: docs/setup-gmail.md
-See credentials.example.json for the expected shape.
+7. Download the JSON. setup will pick it up from Downloads.
 
 The first sign-in shows “Google hasn’t verified this app”.
 That is expected for a private Desktop client. Advanced → Continue.
 
-Do not commit credentials.json or token.json.
+Full walkthrough: docs/setup-gmail.md
 """.strip()
+
+
+def config_file():
+    return migrate_and_bind().config
+
+
+def load_saved_config():
+    path = config_file()
+
+    if not os.path.exists(path):
+        return None
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return None
+
+
+def save_config(plan, backend="ollama"):
+    path = config_file()
+    payload = {
+        "backend": backend,
+        "fast_model": plan["fast_model"],
+        "deep_model": plan["deep_model"],
+        "mlx_model": plan.get("mlx_model")
+    }
+
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+
+    return payload
 
 
 def recommend_models(machine=None):
@@ -82,32 +113,6 @@ def recommend_models(machine=None):
     return plan
 
 
-def load_saved_config():
-    if not os.path.exists(CONFIG_FILE):
-        return None
-
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as handle:
-            return json.load(handle)
-    except Exception:
-        return None
-
-
-def save_config(plan, backend="ollama"):
-    payload = {
-        "backend": backend,
-        "fast_model": plan["fast_model"],
-        "deep_model": plan["deep_model"],
-        "mlx_model": plan.get("mlx_model")
-    }
-
-    with open(CONFIG_FILE, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-        handle.write("\n")
-
-    return payload
-
-
 def ollama_running():
     try:
         response = requests.get(OLLAMA_TAGS_URL, timeout=3)
@@ -137,6 +142,72 @@ def model_installed(names, wanted):
             return True
 
     return False
+
+
+def _spawn_ollama(machine):
+    ollama = machine.get("ollama_bin")
+    system = machine.get("os")
+
+    if system == "Darwin":
+        subprocess.Popen(
+            ["open", "-a", "Ollama"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return True
+
+    if not ollama:
+        return False
+
+    kwargs = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL
+    }
+
+    if system == "Windows":
+        flags = 0
+        if hasattr(subprocess, "DETACHED_PROCESS"):
+            flags |= subprocess.DETACHED_PROCESS
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = flags
+    else:
+        kwargs["start_new_session"] = True
+
+    subprocess.Popen([ollama, "serve"], **kwargs)
+    return True
+
+
+def ensure_ollama_running(timeout=25, quiet=False):
+    running, models = ollama_running()
+
+    if running:
+        return True, models
+
+    machine = detect_machine()
+
+    if not machine.get("ollama_bin"):
+        return False, []
+
+    if not quiet:
+        print("Ollama is installed but not running. Starting it...")
+
+    try:
+        _spawn_ollama(machine)
+    except Exception:
+        return False, []
+
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        time.sleep(1)
+        running, models = ollama_running()
+        if running:
+            if not quiet:
+                print("Ollama is running.")
+            return True, models
+
+    return False, []
 
 
 def ollama_pull(model):

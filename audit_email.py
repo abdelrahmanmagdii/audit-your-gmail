@@ -12,11 +12,6 @@ from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-
 
 # ============================================================
 # CONFIG
@@ -34,6 +29,7 @@ DB_PATH = "subscription_audit_v2.db"
 
 REPORT_CSV = "subscription_report.csv"
 TIMELINE_CSV = "subscription_timeline.csv"
+_PATHS_BOUND = False
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
@@ -128,6 +124,48 @@ def chunks(items, size):
         yield items[i:i + size]
 
 
+def _eta_line(done, total, started, label):
+    elapsed = time.monotonic() - started
+    rate = done / elapsed if elapsed > 0 else 0
+    remaining = max(total - done, 0)
+
+    if rate > 0:
+        eta = remaining / rate
+        minutes = int(eta // 60)
+        seconds = int(eta % 60)
+        eta_txt = f"{minutes}m {seconds:02d}s"
+    else:
+        eta_txt = "?"
+
+    print(
+        f"  {label} {done}/{total}  "
+        f"{rate:.1f}/s  ~{eta_txt} left",
+        flush=True
+    )
+
+
+def bind_paths(files=None):
+    """Point secrets, DB, and CSVs at the app data directory."""
+
+    global CREDENTIALS_FILE
+    global TOKEN_FILE
+    global DB_PATH
+    global REPORT_CSV
+    global TIMELINE_CSV
+    global _PATHS_BOUND
+
+    from gmail_audit.paths import migrate_and_bind
+
+    files = files or migrate_and_bind()
+    CREDENTIALS_FILE = files.credentials
+    TOKEN_FILE = files.token
+    DB_PATH = files.db
+    REPORT_CSV = files.report
+    TIMELINE_CSV = files.timeline
+    _PATHS_BOUND = True
+    return files
+
+
 def apply_runtime_config(
     backend=None,
     fast_model=None,
@@ -135,8 +173,11 @@ def apply_runtime_config(
     limit=None
 ):
     """
-    Load `.gmail-audit.json` from setup, then apply CLI overrides.
+    Load app-dir config from setup, then apply CLI overrides.
     """
+
+    if not _PATHS_BOUND:
+        bind_paths()
 
     global STAGE1_BACKEND
     global FAST_OLLAMA_MODEL
@@ -219,39 +260,63 @@ def apply_runtime_config(
 # ============================================================
 
 def get_gmail_service():
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
+    from gmail_audit.oauth import explain_gmail_error, inspect_oauth_json
+
+    kind, _payload = inspect_oauth_json(CREDENTIALS_FILE)
+
+    if kind == "web":
+        print()
+        print(
+            "credentials.json is a Web client. "
+            "Create an OAuth client of type Desktop app instead."
+        )
+        print("Walkthrough: docs/setup-gmail.md")
+        raise SystemExit(1)
+
     creds = None
 
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(
-            TOKEN_FILE,
-            SCOPES
-        )
-
-    if not creds or not creds.valid:
-
-        if creds and creds.expired and creds.refresh_token:
-            print("Refreshing Gmail authentication...")
-            creds.refresh(Request())
-
-        else:
-            print("Opening Google authentication...")
-
-            flow = InstalledAppFlow.from_client_secrets_file(
-                CREDENTIALS_FILE,
+    try:
+        if os.path.exists(TOKEN_FILE):
+            creds = Credentials.from_authorized_user_file(
+                TOKEN_FILE,
                 SCOPES
             )
 
-            creds = flow.run_local_server(port=0)
+        if not creds or not creds.valid:
 
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
+            if creds and creds.expired and creds.refresh_token:
+                print("Refreshing Gmail authentication...")
+                creds.refresh(Request())
 
-    return build(
-        "gmail",
-        "v1",
-        credentials=creds,
-        cache_discovery=False
-    )
+            else:
+                print("Opening Google authentication...")
+
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    CREDENTIALS_FILE,
+                    SCOPES
+                )
+
+                creds = flow.run_local_server(port=0)
+
+            with open(TOKEN_FILE, "w") as f:
+                f.write(creds.to_json())
+
+        return build(
+            "gmail",
+            "v1",
+            credentials=creds,
+            cache_discovery=False
+        )
+    except SystemExit:
+        raise
+    except Exception as error:
+        explain_gmail_error(error, token_path=TOKEN_FILE)
+        raise SystemExit(1)
 
 
 # ============================================================
@@ -506,70 +571,43 @@ def get_full_email(service, preview):
 def check_ollama(required_models=None):
     required_models = required_models or [DEEP_MODEL]
 
-    try:
-        response = requests.get(
-            "http://localhost:11434/api/tags",
-            timeout=5
-        )
+    from gmail_audit.recommend import (
+        ensure_ollama_running,
+        installed_ollama_names,
+        model_installed,
+        print_ollama_install_help
+    )
+    from gmail_audit.hardware import detect_machine
 
-        response.raise_for_status()
+    running, models = ensure_ollama_running()
 
-        models = response.json().get(
-            "models",
-            []
-        )
-
-        names = [
-            model.get("name", "")
-            for model in models
-        ]
-
-        print("Ollama is running.")
-
-        missing = []
-
-        for required in required_models:
-            if not any(
-                name == required
-                or name.startswith(required)
-                for name in names
-            ):
-                missing.append(required)
-
-        if missing:
-            print()
-            print("Missing Ollama model(s):")
-
-            for model in missing:
-                print(
-                    f"  ollama pull {model}"
-                )
-
-            print()
-            print("Or run:  gmail-audit setup")
-            return False
-
-        return True
-
-    except Exception:
+    if not running:
         print()
-        print(
-            "Cannot connect to Ollama."
-        )
-
-        print(
-            "Install from https://ollama.com/download"
-        )
-        print(
-            "then open the Ollama app or run:"
-        )
-
-        print()
-        print(
-            "ollama serve"
-        )
-
+        print("Cannot connect to Ollama.")
+        print_ollama_install_help(detect_machine())
         return False
+
+    names = installed_ollama_names(models)
+    missing = [
+        model
+        for model in required_models
+        if not model_installed(names, model)
+    ]
+
+    if missing:
+        print()
+        print("Missing Ollama model(s):")
+
+        for model in missing:
+            print(
+                f"  ollama pull {model}"
+            )
+
+        print()
+        print("Or run:  gmail-audit setup")
+        return False
+
+    return True
 
 
 def call_ollama(
@@ -1682,15 +1720,10 @@ def flush_screening_batch(
     model,
     tokenizer,
     previews,
-    index,
-    total
+    done,
+    total,
+    started
 ):
-    print(
-        f"Screening Gmail emails "
-        f"{index}/{total} "
-        f"(batch of {len(previews)})..."
-    )
-
     results = screen_previews(
         previews,
         model,
@@ -1701,6 +1734,13 @@ def flush_screening_batch(
         conn,
         previews,
         results
+    )
+
+    _eta_line(
+        done,
+        total,
+        started,
+        "Stage 1"
     )
 
 
@@ -1735,10 +1775,28 @@ def run_screening(
             "One email at a time (safe on CPU and laptops)."
         )
 
-    pending_previews = []
+    print(
+        "Ctrl+C is safe. Progress is saved."
+    )
 
-    total = len(message_ids)
-    fetched = 0
+    batch_size = (
+        FAST_BATCH_SIZE
+        if STAGE1_BACKEND == "mlx"
+        else 1
+    )
+
+    pending_previews = []
+    pending_total = count_pending_screening(
+        conn,
+        message_ids
+    )
+    done = 0
+    started = time.monotonic()
+
+    if pending_total:
+        print(
+            f"Pending: {pending_total}"
+        )
 
     for index, message_id in enumerate(
         message_ids,
@@ -1769,19 +1827,20 @@ def run_screening(
         pending_previews.append(
             preview
         )
-        fetched += 1
 
-        if len(pending_previews) >= FAST_BATCH_SIZE:
-            batch = pending_previews[:FAST_BATCH_SIZE]
-            pending_previews = pending_previews[FAST_BATCH_SIZE:]
+        if len(pending_previews) >= batch_size:
+            batch = pending_previews[:batch_size]
+            pending_previews = pending_previews[batch_size:]
             try:
+                done += len(batch)
                 flush_screening_batch(
                     conn,
                     model,
                     tokenizer,
                     batch,
-                    index,
-                    total
+                    done,
+                    pending_total,
+                    started
                 )
             except KeyboardInterrupt:
                 conn.commit()
@@ -1789,13 +1848,15 @@ def run_screening(
 
     if pending_previews:
         try:
+            done += len(pending_previews)
             flush_screening_batch(
                 conn,
                 model,
                 tokenizer,
                 pending_previews,
-                total,
-                total
+                done,
+                pending_total,
+                started
             )
         except KeyboardInterrupt:
             conn.commit()
@@ -1907,7 +1968,7 @@ def run_deep_analysis(
 ):
     print()
     print("=" * 70)
-    print("STAGE 2 — DEEP ANALYSIS WITH QWEN3 8B")
+    print(f"STAGE 2 — DEEP ANALYSIS WITH {DEEP_MODEL}")
     print("=" * 70)
 
     previews = load_interesting_previews(
@@ -1931,7 +1992,12 @@ def run_deep_analysis(
     if not pending:
         return
 
+    print(
+        "Ctrl+C is safe. Progress is saved."
+    )
+
     processed = 0
+    started = time.monotonic()
 
     for preview_batch in chunks(
         pending,
@@ -2030,6 +2096,13 @@ def run_deep_analysis(
 
             processed += len(
                 full_emails
+            )
+
+            _eta_line(
+                processed,
+                len(pending),
+                started,
+                "Stage 2"
             )
 
         except KeyboardInterrupt:
@@ -2343,7 +2416,7 @@ def export_merchant_report(report_rows):
         writer.writerows(report_rows)
 
 
-def print_report(report_rows):
+def print_report(report_rows, limit=10):
     print()
     print("=" * 70)
     print("SUBSCRIPTION / RECURRING PAYMENT AUDIT")
@@ -2357,7 +2430,9 @@ def print_report(report_rows):
 
         return
 
-    for merchant in report_rows:
+    shown = report_rows[:limit] if limit else report_rows
+
+    for merchant in shown:
 
         print()
         print("-" * 70)
@@ -2413,6 +2488,17 @@ def print_report(report_rows):
                 f"Flags:        "
                 f"{merchant['flags']}"
             )
+
+    extra = len(report_rows) - len(shown)
+
+    if extra > 0:
+        print()
+        print(
+            f"+ {extra} more merchant(s) in {REPORT_CSV}"
+        )
+        print(
+            "Reprint anytime:  gmail-audit report"
+        )
 
 
 # ============================================================
@@ -2538,6 +2624,13 @@ def main():
         print(
             f"Limit:        {MESSAGE_LIMIT} most recent matches"
         )
+        print(
+            "Then:         gmail-audit run --all"
+        )
+
+    print(
+        "Ctrl+C is safe. Progress is saved to SQLite."
+    )
 
     # --------------------------------------------------------
     # Prerequisites
@@ -2550,6 +2643,9 @@ def main():
         print()
         print(
             "ERROR: credentials.json not found."
+        )
+        print(
+            f"Expected: {CREDENTIALS_FILE}"
         )
         print(
             "Run:  gmail-audit setup"
@@ -2594,8 +2690,10 @@ def main():
 
     if MESSAGE_LIMIT:
         print(
-            "Re-run without --limit to continue "
-            "the rest. Already-screened mail is skipped."
+            "Then run:  gmail-audit run --all"
+        )
+        print(
+            "Already-screened mail is skipped."
         )
 
     fast_model = None
@@ -2780,8 +2878,7 @@ def main():
     )
 
     print(
-        "For actual spend, the next step is to "
-        "reconcile this against your bank transaction CSV."
+        f"Reprint later:  gmail-audit report"
     )
 
     conn.close()

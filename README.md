@@ -6,23 +6,36 @@ Works on **macOS, Windows, and Linux**. Default inference is [Ollama](https://ol
 
 Email bodies are never sent to a remote LLM API. Gmail is used only to fetch your mail.
 
+State lives in `~/.gmail-audit/` (Windows: `%APPDATA%\gmail-audit`). You can run the command from any directory.
+
 ## Quick start
+
+With [uv](https://docs.astral.sh/uv/):
+
+```bash
+uvx --from git+https://github.com/abdelrahmanmagdii/audit-your-gmail.git gmail-audit setup
+uvx --from git+https://github.com/abdelrahmanmagdii/audit-your-gmail.git gmail-audit run
+```
+
+Or a local clone:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .
 gmail-audit setup
-gmail-audit run --limit 200        # first try (minutes)
-gmail-audit run                    # rest of the inbox (resumes)
+gmail-audit run                    # first try: 200 most recent matches
+gmail-audit run --all              # rest of the inbox (resumes)
+gmail-audit report                 # reprint CSVs without calling Gmail
 ```
 
-`setup` detects RAM/OS/GPU, tells you which Ollama models to pull, and walks through Gmail OAuth. `run` resumes from SQLite if you stop it.
+`setup` detects RAM/OS/GPU, starts Ollama if needed, pulls models, and imports a Desktop OAuth JSON from Downloads. `run` resumes from SQLite if you stop it (Ctrl+C is safe).
 
 ```bash
 gmail-audit doctor                 # what is missing?
 gmail-audit setup --yes            # pull models without a prompt
-gmail-audit run --backend ollama   # default, all platforms
+gmail-audit run --limit 50         # even shorter trial
+gmail-audit report --open          # open the merchant CSV
 gmail-audit run --backend mlx      # Apple Silicon only
 ```
 
@@ -44,10 +57,8 @@ Short version:
 1. [Google Cloud Console](https://console.cloud.google.com/) → new project
 2. Enable the **Gmail API**
 3. OAuth consent: **External**, stay in **Testing**, add **yourself** as a test user, add scope `gmail.readonly`
-4. OAuth client ID → **Desktop app**
-5. Save the JSON as `credentials.json` in this directory
-
-See `credentials.example.json`. Do not commit `credentials.json` or `token.json`.
+4. OAuth client ID → **Desktop app** → Download JSON
+5. Leave the file in Downloads (name like `client_secret_….json`). `gmail-audit setup` copies it into `~/.gmail-audit/credentials.json`
 
 The first browser sign-in shows **“Google hasn’t verified this app”**. That is expected. Advanced → Continue.
 
@@ -62,7 +73,7 @@ The first browser sign-in shows **“Google hasn’t verified this app”**. Tha
 
 Only one stage is loaded at a time. Fanless laptops will still get warm on Stage 2; use a hard desk and plug in. CPU-only Windows/Linux works and is slow.
 
-Ollama downloads are local model weights (a few GB). `setup` asks before pulling.
+Ollama downloads are local model weights (a few GB). `setup` asks before pulling. If Ollama is installed but not running, setup/doctor/run try to start it.
 
 ## What it does
 
@@ -70,26 +81,29 @@ Ollama downloads are local model weights (a few GB). `setup` asks before pulling
 2. **Stage 1** — classifies metadata only. High recall: uncertain screens are kept.
 3. **Stage 2** — reads the body and extracts merchant, amount, cadence, risk, evidence **only** for interesting mail.
 
-`--limit N` processes the N most recent matches so a first run finishes in minutes. Re-run without `--limit` to continue; already-screened messages are skipped.
+The first `run` with an empty database processes **200** most recent matches. Use `--all` for the rest; already-screened messages are skipped. Progress prints a rate and ETA.
 
-## Outputs (gitignored)
+## Outputs (in the data directory)
 
 | File | Contents |
 |---|---|
 | `subscription_audit_v2.db` | Screened + analyzed rows |
 | `subscription_report.csv` | Per-merchant summary (after Stage 2) |
 | `subscription_timeline.csv` | Event timeline (after Stage 2) |
-| `.gmail-audit.json` | Models chosen by `setup` |
+| `config.json` | Models chosen by `setup` |
+| `credentials.json` / `token.json` | Your Gmail OAuth client |
+
+Override the directory with `GMAIL_AUDIT_HOME`. `gmail-audit doctor` prints the path.
 
 Fake sample (not a real inbox): [`examples/sample_subscription_report.csv`](examples/sample_subscription_report.csv).
 
-Amounts are values **seen in email**, not confirmed spend. Reconcile against bank/card CSVs.
+Amounts are values **seen in email**, not confirmed spend. Reconcile against bank/card CSVs. `gmail-audit report` reprints the top merchants from SQLite without calling Gmail.
 
 ## Privacy
 
 - Inference is local (Ollama on localhost, optional MLX in-process).
 - Gmail scope is read-only: `gmail.readonly`.
-- Secrets, the database, and CSV reports are gitignored.
+- Secrets, the database, and CSV reports stay in the data directory (and are gitignored if you clone).
 
 ## License
 

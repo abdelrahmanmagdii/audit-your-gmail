@@ -6,7 +6,12 @@ You only do this once per Google Cloud project. The JSON never leaves your machi
 
 ## What you will have at the end
 
-A file named `credentials.json` in the repo directory (same folder as `README.md`). Shape:
+A file named `credentials.json` in the app data directory:
+
+- macOS / Linux: `~/.gmail-audit/credentials.json`
+- Windows: `%APPDATA%\gmail-audit\credentials.json`
+
+`gmail-audit setup` copies a Desktop JSON from **Downloads** (`client_secret_….json`) into that folder. You do not have to rename it yourself.
 
 ```json
 {
@@ -72,16 +77,14 @@ Then:
 3. Name: `gmail-audit-desktop`.
 4. Create.
 5. **Download JSON**.
-6. Rename the file to `credentials.json` and put it in the cloned repo directory (not in `docs/` or `.venv/`).
+6. Leave it in Downloads. Re-run (or press Enter in) `gmail-audit setup`.
 
-If the download is named `client_secret_….json`, rename it. The app looks for `credentials.json` in the current working directory.
+If you prefer to place it yourself, save it as `credentials.json` in `~/.gmail-audit/` (Windows: `%APPDATA%\gmail-audit\`).
 
 ## 5. Sign in once
 
-From the repo directory:
-
 ```bash
-gmail-audit run --limit 200
+gmail-audit run
 ```
 
 A browser window opens. Sign in with the **test user** you added.
@@ -94,14 +97,14 @@ Expected. This is your unpublished Desktop client, not a store app.
 2. Click **Go to Gmail Audit (local) (unsafe)**.
 3. Allow read-only Gmail access.
 
-That writes `token.json` next to `credentials.json`. Both are gitignored.
+That writes `token.json` next to `credentials.json` in the data directory.
 
 ## If it fails
 
 | Symptom | Fix |
 |---|---|
-| `credentials.json not found` | File is not in the directory you ran the command from. |
-| Access blocked / 403 | You are not a test user, or you used a different Google account than the one you added. |
+| `credentials.json not found` | Leave the Desktop JSON in Downloads and re-run `gmail-audit setup`, or copy it to `~/.gmail-audit/credentials.json`. |
+| Access blocked / 403 | You are not a test user, or you used a different Google account than the one you added. Delete `token.json` and retry. |
 | Redirect / localhost error | Client type must be **Desktop app**, not Web. |
 | Scope missing | Add `gmail.readonly` under Data Access, then delete `token.json` and sign in again. |
 | “App is in production” but login still blocked | Personal Gmail tools should stay in **Testing**. Publishing triggers Google verification. |

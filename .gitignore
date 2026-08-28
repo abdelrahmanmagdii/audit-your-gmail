@@ -3,6 +3,7 @@ credentials.json
 token.json
 client_secret*.json
 .gmail-audit.json
+config.json
 
 # Local audit data
 *.db
@@ -21,6 +22,9 @@ __pycache__/
 venv/
 .env
 .env.*
+*.egg-info/
+dist/
+build/
 
 # OS / editor
 .DS_Store
