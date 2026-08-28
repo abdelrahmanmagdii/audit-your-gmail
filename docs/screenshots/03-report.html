@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>gmail-audit report</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 1600px;
+      height: 900px;
+      overflow: hidden;
+      background: #3f372f;
+    }
+    .sheet {
+      width: 1600px;
+      height: 900px;
+      background: #f3ece1;
+      color: #1c1917;
+      padding: 48px 56px 40px;
+      font-family: "IBM Plex Sans", sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid #1c1917;
+      padding-bottom: 18px;
+    }
+    .left h1 {
+      font-family: "Libre Baskerville", serif;
+      font-size: 34px;
+      font-weight: 400;
+    }
+    .left p {
+      margin-top: 8px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px;
+      color: #5c5348;
+      letter-spacing: 0.04em;
+    }
+    .badge {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      border: 2px solid #9b2c2c;
+      color: #9b2c2c;
+      padding: 8px 12px;
+      transform: rotate(-6deg);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 28px;
+      font-size: 16px;
+    }
+    th {
+      text-align: left;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #6b6258;
+      padding: 0 12px 12px 0;
+      border-bottom: 1px solid #cfc3b1;
+    }
+    td {
+      padding: 16px 16px 16px 0;
+      border-bottom: 1px solid #e0d5c4;
+      vertical-align: top;
+    }
+    .merchant {
+      font-family: "Libre Baskerville", serif;
+      font-size: 20px;
+    }
+    .num {
+      font-family: "IBM Plex Mono", monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .risk {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .high { color: #9b2c2c; }
+    .med { color: #8a5a12; }
+    .low { color: #3d6b4f; }
+    .flag {
+      font-size: 14px;
+      color: #5c5348;
+    }
+    footer {
+      margin-top: auto;
+      display: flex;
+      justify-content: space-between;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px;
+      color: #6b6258;
+      padding-top: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <header>
+      <div class="left">
+        <h1>subscription_report.csv</h1>
+        <p>gmail-audit · amounts observed in email, not confirmed spend</p>
+      </div>
+      <div class="badge">Sample · not a real inbox</div>
+    </header>
+    <table>
+      <thead>
+        <tr>
+          <th>Merchant</th>
+          <th>Risk</th>
+          <th>Status</th>
+          <th>Cadence</th>
+          <th>Amount seen</th>
+          <th>Events</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="merchant">Example Trial</td>
+          <td class="risk high">High</td>
+          <td>trial</td>
+          <td>monthly</td>
+          <td class="num">USD 0.00</td>
+          <td class="num">3</td>
+          <td class="flag">trial ending; card on file</td>
+        </tr>
+        <tr>
+          <td class="merchant">Example Stream</td>
+          <td class="risk med">Medium</td>
+          <td>active</td>
+          <td>monthly</td>
+          <td class="num">USD 15.99</td>
+          <td class="num">18</td>
+          <td class="flag">price increase mentioned</td>
+        </tr>
+        <tr>
+          <td class="merchant">Example Gym</td>
+          <td class="risk med">Medium</td>
+          <td>active</td>
+          <td>monthly</td>
+          <td class="num">USD 49.00</td>
+          <td class="num">9</td>
+          <td class="flag">hard-to-cancel language</td>
+        </tr>
+        <tr>
+          <td class="merchant">Example Cloud</td>
+          <td class="risk low">Low</td>
+          <td>active</td>
+          <td>monthly</td>
+          <td class="num">USD 12.00</td>
+          <td class="num">11</td>
+          <td class="flag"></td>
+        </tr>
+        <tr>
+          <td class="merchant">Example News</td>
+          <td class="risk low">Low</td>
+          <td>cancelled</td>
+          <td>annual</td>
+          <td class="num">USD 99.00</td>
+          <td class="num">4</td>
+          <td class="flag">cancellation confirmation</td>
+        </tr>
+      </tbody>
+    </table>
+    <footer>
+      <span>github.com/abdelrahmanmagdii/audit-your-gmail</span>
+      <span>Merchants are fictional for the post</span>
+    </footer>
+  </div>
+</body>
+</html>

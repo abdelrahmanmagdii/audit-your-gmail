@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>gmail-audit terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 1600px;
+      height: 900px;
+      overflow: hidden;
+      background: #c4b7a4;
+    }
+    .desk {
+      width: 1600px;
+      height: 900px;
+      padding: 40px 48px;
+      background: #c4b7a4;
+    }
+    .window {
+      height: 100%;
+      background: #231f1b;
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #6a5c4e;
+    }
+    .chrome {
+      height: 44px;
+      background: #2e2924;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 8px;
+      border-bottom: 1px solid #3f3831;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .r { background: #a3533d; }
+    .y { background: #b08948; }
+    .g { background: #5a7a52; }
+    .title {
+      flex: 1;
+      text-align: center;
+      font-family: "IBM Plex Sans", sans-serif;
+      font-size: 13px;
+      color: #9a8d7c;
+    }
+    pre {
+      flex: 1;
+      padding: 28px 36px 24px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 17px;
+      line-height: 1.42;
+      color: #eadfce;
+      white-space: pre;
+    }
+    .dim { color: #8a7f70; }
+    .ok { color: #8fce9a; }
+    .warn { color: #e0b15a; }
+    .hot { color: #e07a55; }
+    .cmd { color: #f6eee3; }
+    .foot {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      color: #7a6f62;
+      padding: 0 36px 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="desk">
+    <div class="window">
+      <div class="chrome">
+        <div class="dot r"></div>
+        <div class="dot y"></div>
+        <div class="dot g"></div>
+        <div class="title">zsh — gmail-audit run --limit 200</div>
+      </div>
+<pre><span class="cmd">$ gmail-audit run --limit 200</span>
+
+======================================================================
+LOCAL EMAIL SUBSCRIPTION AUDITOR
+======================================================================
+
+AI inference: <span class="ok">LOCAL ONLY</span> (Stage 1 ollama, Stage 2 Ollama)
+Fast model:   qwen2.5:3b
+Deep model:   qwen3:8b (interesting emails only)
+Limit:        200 most recent matches
+
+Connecting to Gmail...
+Searching Gmail...
+Gmail candidate emails: 200
+<span class="dim">Re-run without --limit to continue the rest.</span>
+
+STAGE 1 — FAST SCREENING WITH LOCAL OLLAMA
+  screened 200/200   kept 41
+
+STAGE 2 — DEEP ANALYSIS WITH QWEN3 8B
+  analyzed 41/41
+
+----------------------------------------------------------------------
+Example Trial
+Risk:         <span class="hot">HIGH</span>
+Status:       trial
+Flags:        trial ending; card on file
+
+Example Stream
+Risk:         <span class="warn">MEDIUM</span>
+Amount seen:  USD 15.99 monthly
+Flags:        price increase mentioned
+
+<span class="ok">Merchant report: subscription_report.csv</span>
+<span class="dim">Amounts are values seen in email, not confirmed spend.</span></pre>
+      <div class="foot">SAMPLE OUTPUT · fake merchants · not a real inbox</div>
+    </div>
+  </div>
+</body>
+</html>

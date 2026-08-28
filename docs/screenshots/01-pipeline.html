@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>gmail-audit pipeline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 1600px;
+      height: 900px;
+      overflow: hidden;
+      background: #1c1917;
+    }
+    .frame {
+      width: 1600px;
+      height: 900px;
+      padding: 56px 64px 48px;
+      background:
+        radial-gradient(1200px 500px at 90% -10%, #3a2e24 0%, transparent 55%),
+        #1c1917;
+      color: #eadfce;
+      font-family: "IBM Plex Sans", sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .kicker {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 15px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #b9a894;
+    }
+    h1 {
+      font-family: "Libre Baskerville", serif;
+      font-size: 42px;
+      font-weight: 400;
+      margin-top: 14px;
+      line-height: 1.2;
+      color: #f6eee3;
+    }
+    .stamp {
+      border: 2px solid #c45c3a;
+      color: #e07a55;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      padding: 10px 14px;
+      transform: rotate(8deg);
+      opacity: 0.95;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 36px 1fr 36px 1fr 36px 1fr;
+      gap: 0;
+      align-items: stretch;
+      margin-top: 56px;
+      flex: 1;
+    }
+    .card {
+      background: #2a241f;
+      border: 1px solid #4a4036;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .n {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      color: #c45c3a;
+      letter-spacing: 0.16em;
+    }
+    .card h2 {
+      font-family: "Libre Baskerville", serif;
+      font-size: 24px;
+      font-weight: 400;
+      color: #f6eee3;
+    }
+    .card p {
+      font-size: 16px;
+      line-height: 1.45;
+      color: #cbbba4;
+    }
+    .card .meta {
+      margin-top: auto;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px;
+      color: #8fce9a;
+    }
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #8a7f70;
+      font-size: 28px;
+    }
+    .foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 40px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 14px;
+      color: #8a7f70;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="top">
+      <div>
+        <div class="kicker">gmail-audit · localhost only</div>
+        <h1>Mail never leaves this machine.</h1>
+      </div>
+      <div class="stamp">Not sent<br />to a cloud LLM</div>
+    </div>
+    <div class="flow">
+      <div class="card">
+        <div class="n">01</div>
+        <h2>Gmail</h2>
+        <p>Read-only search for renewal, trial, and charge language. Scope is gmail.readonly.</p>
+        <div class="meta">your OAuth client</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="card">
+        <div class="n">02</div>
+        <h2>Small local model</h2>
+        <p>Screens sender, subject, snippet. Uncertain mail is kept. Bodies stay unread.</p>
+        <div class="meta">Ollama on 127.0.0.1</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="card">
+        <div class="n">03</div>
+        <h2>Larger local model</h2>
+        <p>Reads the body only for hits. Extracts merchant, amount, cadence, risk.</p>
+        <div class="meta">still localhost</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="card">
+        <div class="n">04</div>
+        <h2>CSV + SQLite</h2>
+        <p>Report and timeline on disk. Ctrl+C is safe. Re-run skips finished mail.</p>
+        <div class="meta">your working directory</div>
+      </div>
+    </div>
+    <div class="foot">
+      <span>github.com/abdelrahmanmagdii/audit-your-gmail</span>
+      <span>sample diagram · no inbox data</span>
+    </div>
+  </div>
+</body>
+</html>
