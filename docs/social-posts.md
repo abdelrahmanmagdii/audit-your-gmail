@@ -14,13 +14,13 @@ https://github.com/abdelrahmanmagdii/audit-your-gmail
 
 - Inference stays on localhost (Ollama; optional MLX on Apple Silicon)
 - Resume-safe SQLite: stop with Ctrl+C and run again
-- First try is `gmail-audit run --limit 200` so you are not processing five years overnight
+- The first `gmail-audit run` caps itself at the 200 most recent matches so you are not processing five years overnight; `--all` does the rest
 
 You create your own Google Cloud Desktop OAuth client. I cannot ship a shared Gmail login — Google treats gmail.readonly as a restricted scope.
 
 Ollama will download a few GB of weights. Amounts in the report are values seen in email, not confirmed spend.
 
-Clone, `pip install -e .`, `gmail-audit setup`, then `gmail-audit run --limit 200`.
+Clone, `pip install -e .`, `gmail-audit setup`, then `gmail-audit run`.
 
 ## X (short)
 
@@ -40,6 +40,6 @@ It searches for renewal/trial/charge language, screens metadata with a small loc
 
 https://github.com/abdelrahmanmagdii/audit-your-gmail
 
-macOS, Windows, Linux. `gmail-audit setup` picks models from your RAM. First try: `gmail-audit run --limit 200`.
+macOS, Windows, Linux. `gmail-audit setup` picks models from your RAM. First `gmail-audit run` caps itself at 200 recent matches; `--all` does the rest.
 
 Constraint: you create a Google Cloud Desktop client (gmail.readonly is restricted, so there is no shared “Sign in with Google” for this repo) and you run Ollama locally.
