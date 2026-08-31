@@ -5,6 +5,8 @@ import sqlite3
 from gmail_audit.hardware import detect_machine
 from gmail_audit.oauth import explain_gmail_error, import_desktop_credentials
 from gmail_audit.paths import (
+    Files,
+    data_dir,
     db_has_screening,
     migrate_and_bind,
     open_path
@@ -244,7 +246,7 @@ def cmd_run(args):
         print("Use --limit or --all, not both.")
         return 2
 
-    import audit_email
+    from gmail_audit import audit as audit_email
 
     files = _bind()
     audit_email.bind_paths(files)
@@ -274,7 +276,7 @@ def cmd_run(args):
 
 
 def cmd_report(args):
-    import audit_email
+    from gmail_audit import audit as audit_email
 
     files = _bind()
     audit_email.bind_paths(files)
@@ -325,6 +327,74 @@ def cmd_report(args):
         print(f"Opened {files.report}")
 
     return 0
+
+
+def cmd_purge(args):
+    # Do not use _bind() here: migrate_and_bind would first copy
+    # stray files INTO the directory we are about to delete.
+    files = Files(data_dir())
+
+    targets = [
+        (files.token, "Gmail token"),
+        (files.credentials, "OAuth client"),
+        (files.config, "model config"),
+        (files.db, "audit database"),
+        (files.report, "merchant report CSV"),
+        (files.timeline, "timeline CSV"),
+    ]
+
+    existing = [
+        (path, label)
+        for path, label in targets
+        if os.path.exists(path)
+    ]
+
+    if not existing:
+        print(f"Nothing to delete in {files.root}.")
+        _print_revoke_hint()
+        return 0
+
+    print()
+    print("This permanently deletes:")
+
+    for path, label in existing:
+        print(f"  {path}  ({label})")
+
+    if not args.yes:
+        try:
+            answer = input("Delete? [y/N] ").strip().lower()
+        except EOFError:
+            answer = "n"
+
+        if answer not in ("y", "yes"):
+            print("Nothing deleted.")
+            return 1
+
+    for path, label in existing:
+        try:
+            os.remove(path)
+            print(f"Deleted {path}")
+        except OSError as error:
+            print(f"Could not delete {path}: {error}")
+
+    try:
+        os.rmdir(files.root)
+        print(f"Removed {files.root}")
+    except OSError:
+        pass
+
+    _print_revoke_hint()
+    return 0
+
+
+def _print_revoke_hint():
+    print()
+    print("To also revoke the app's Gmail access from your Google")
+    print("account (recommended if you are done with the tool):")
+    print("  https://myaccount.google.com/permissions")
+    print()
+    print("Downloaded Ollama models are managed separately:")
+    print("  ollama rm <model>")
 
 
 def build_parser():
@@ -404,6 +474,17 @@ def build_parser():
         help="Open the merchant CSV"
     )
 
+    purge = sub.add_parser(
+        "purge",
+        help="Delete the token, credentials, database, and CSVs"
+    )
+    purge.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Delete without asking"
+    )
+
     return parser
 
 
@@ -432,6 +513,9 @@ def main(argv=None):
         if args.top < 1:
             parser.error("--top must be a positive integer")
         return cmd_report(args)
+
+    if args.command == "purge":
+        return cmd_purge(args)
 
     parser.print_help()
     return 1

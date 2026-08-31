@@ -49,10 +49,49 @@ def data_dir():
 def ensure_data_dir():
     path = data_dir()
     path.mkdir(parents=True, exist_ok=True)
+
+    # The directory holds OAuth secrets and email-derived data:
+    # keep other local users out.
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+
     return path
 
 
-def _copy_if_needed(src, dest, label):
+def restrict_to_owner(path):
+    """Owner-only read/write (no-op on Windows)."""
+
+    if os.name == "nt":
+        return
+
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def write_private_file(path, text):
+    """Write text to path readable only by the current user."""
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd = os.open(
+        str(path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600
+    )
+
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+    restrict_to_owner(path)
+
+
+def _copy_if_needed(src, dest, label, secret=False):
     src = Path(src)
     dest = Path(dest)
 
@@ -66,6 +105,10 @@ def _copy_if_needed(src, dest, label):
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest)
+
+    if secret:
+        restrict_to_owner(dest)
+
     _COPIED.add(key)
     print(f"Copied {label} → {dest}")
     return True
@@ -83,12 +126,14 @@ def migrate_and_bind():
     _copy_if_needed(
         cwd / CREDENTIALS_NAME,
         root / CREDENTIALS_NAME,
-        CREDENTIALS_NAME
+        CREDENTIALS_NAME,
+        secret=True
     )
     _copy_if_needed(
         cwd / TOKEN_NAME,
         root / TOKEN_NAME,
-        TOKEN_NAME
+        TOKEN_NAME,
+        secret=True
     )
     _copy_if_needed(
         cwd / DB_NAME,

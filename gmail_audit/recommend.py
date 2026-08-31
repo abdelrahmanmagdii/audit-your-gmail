@@ -11,8 +11,34 @@ from gmail_audit.hardware import detect_machine
 from gmail_audit.paths import migrate_and_bind
 
 
-OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
 OLLAMA_DOWNLOAD = "https://ollama.com/download"
+
+
+def ollama_base_url():
+    """
+    Honor OLLAMA_HOST the way the Ollama client does: bare host,
+    host:port, or full URL. Defaults to the local server.
+    """
+
+    raw = (os.environ.get("OLLAMA_HOST") or "").strip().rstrip("/")
+
+    if not raw:
+        return "http://localhost:11434"
+
+    if "://" not in raw:
+        raw = "http://" + raw
+
+    from urllib.parse import urlparse
+
+    try:
+        has_port = urlparse(raw).port is not None
+    except ValueError:
+        has_port = True
+
+    if not has_port and raw.startswith("http://"):
+        raw += ":11434"
+
+    return raw
 
 GMAIL_SETUP_STEPS = """
 Gmail API (read-only) — you create your own Desktop OAuth client.
@@ -115,7 +141,10 @@ def recommend_models(machine=None):
 
 def ollama_running():
     try:
-        response = requests.get(OLLAMA_TAGS_URL, timeout=3)
+        response = requests.get(
+            ollama_base_url() + "/api/tags",
+            timeout=3
+        )
         response.raise_for_status()
         return True, response.json().get("models", [])
     except Exception:
@@ -183,6 +212,15 @@ def ensure_ollama_running(timeout=25, quiet=False):
 
     if running:
         return True, models
+
+    base = ollama_base_url()
+
+    if "localhost" not in base and "127.0.0.1" not in base:
+        # OLLAMA_HOST points at a remote server; starting a local
+        # Ollama would not help.
+        if not quiet:
+            print(f"Cannot reach Ollama at {base} (OLLAMA_HOST).")
+        return False, []
 
     machine = detect_machine()
 

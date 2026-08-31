@@ -97,7 +97,9 @@ Expected. This is your unpublished Desktop client, not a store app.
 2. Click **Go to Gmail Audit (local) (unsafe)**.
 3. Allow read-only Gmail access.
 
-That writes `token.json` next to `credentials.json` in the data directory.
+That writes `token.json` next to `credentials.json` in the data directory (readable only by your user account).
+
+**Note:** because the app stays in Testing, Google expires this token after **7 days**. `gmail-audit run` detects that and reopens the browser sign-in automatically — you do not need to delete anything by hand.
 
 ## If it fails
 
@@ -105,6 +107,7 @@ That writes `token.json` next to `credentials.json` in the data directory.
 |---|---|
 | `credentials.json not found` | Leave the Desktop JSON in Downloads and re-run `gmail-audit setup`, or copy it to `~/.gmail-audit/credentials.json`. |
 | Access blocked / 403 | You are not a test user, or you used a different Google account than the one you added. Delete `token.json` and retry. |
+| `invalid_grant` / token expired or revoked | Normal after 7 days in Testing. `gmail-audit run` re-opens the sign-in automatically; if it doesn't, delete `token.json` and retry. |
 | Redirect / localhost error | Client type must be **Desktop app**, not Web. |
 | Scope missing | Add `gmail.readonly` under Data Access, then delete `token.json` and sign in again. |
 | “App is in production” but login still blocked | Personal Gmail tools should stay in **Testing**. Publishing triggers Google verification. |

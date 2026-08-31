@@ -1,5 +1,7 @@
 # Audit Your Gmail
 
+[![CI](https://github.com/abdelrahmanmagdii/audit-your-gmail/actions/workflows/ci.yml/badge.svg)](https://github.com/abdelrahmanmagdii/audit-your-gmail/actions/workflows/ci.yml)
+
 Local subscription auditor for Gmail. It searches recent mail for recurring-billing language, screens sender/subject/snippet with a **small local model**, then runs a **larger local model** only on the hits.
 
 Works on **macOS, Windows, and Linux**. Default inference is [Ollama](https://ollama.com). Apple Silicon can optionally use MLX for Stage 1.
@@ -7,6 +9,8 @@ Works on **macOS, Windows, and Linux**. Default inference is [Ollama](https://ol
 Email bodies are never sent to a remote LLM API. Gmail is used only to fetch your mail.
 
 State lives in `~/.gmail-audit/` (Windows: `%APPDATA%\gmail-audit`). You can run the command from any directory.
+
+![Sample report — fictional inbox](docs/screenshots/03-report.png)
 
 ## Quick start
 
@@ -37,6 +41,7 @@ gmail-audit setup --yes            # pull models without a prompt
 gmail-audit run --limit 50         # even shorter trial
 gmail-audit report --open          # open the merchant CSV
 gmail-audit run --backend mlx      # Apple Silicon only
+gmail-audit purge                  # delete token, credentials, DB, CSVs
 ```
 
 Apple Silicon extra (optional faster Stage 1):
@@ -62,6 +67,8 @@ Short version:
 
 The first browser sign-in shows **“Google hasn’t verified this app”**. That is expected. Advanced → Continue.
 
+**Known tradeoff:** while the OAuth app stays in Testing (which it should — publishing triggers Google's verification process), Google expires the saved token after **7 days**. When that happens, `gmail-audit run` notices and reopens the browser sign-in automatically; you just click through again.
+
 ## How it picks models
 
 | RAM | Stage 1 (screen) | Stage 2 (extract) |
@@ -77,7 +84,7 @@ Ollama downloads are local model weights (a few GB). `setup` asks before pulling
 
 ## What it does
 
-1. **Search** — Gmail query for subscription / renewal / trial / charge language (`newer_than:5y`).
+1. **Search** — Gmail query for subscription / renewal / trial / charge language (`newer_than:5y`). The built-in phrases are **English**; for inboxes in other languages, put a translated query under a `search_query` key in `config.json` (same Gmail query syntax).
 2. **Stage 1** — classifies metadata only. High recall: uncertain screens are kept.
 3. **Stage 2** — reads the body and extracts merchant, amount, cadence, risk, evidence **only** for interesting mail.
 
@@ -101,9 +108,34 @@ Amounts are values **seen in email**, not confirmed spend. Reconcile against ban
 
 ## Privacy
 
-- Inference is local (Ollama on localhost, optional MLX in-process).
-- Gmail scope is read-only: `gmail.readonly`.
-- Secrets, the database, and CSV reports stay in the data directory (and are gitignored if you clone).
+### Network calls this tool makes
+
+The complete list — you can grep the code to confirm:
+
+| Destination | When | What is sent |
+|---|---|---|
+| Google OAuth + Gmail API (TLS) | sign-in and `run` | OAuth credentials; read-only Gmail queries |
+| Ollama (`localhost:11434`, or your `OLLAMA_HOST`) | Stage 1 & 2 | email metadata and flagged bodies, to **your own** Ollama server |
+| `ollama.com` | `setup` model pulls | nothing personal — downloads weights |
+| `huggingface.co` | only with the optional MLX backend | nothing personal — downloads weights |
+
+No telemetry, no analytics, no crash reporting. Stage 1 fetches **metadata only** (`format=metadata`: subject, sender, date, snippet); full bodies are downloaded only for flagged mail, and only your local models ever see them.
+
+- Gmail scope is read-only: `gmail.readonly`. It cannot send, delete, or change mail.
+- Secrets, the database, and CSV reports stay in the data directory, readable only by your user account (`chmod 600`/`700` on macOS/Linux), and are gitignored if you clone.
+- Point `OLLAMA_HOST` at a nonstandard port or another machine if that's where your Ollama runs — just know email content then goes to that host.
+
+### Deleting everything
+
+```bash
+gmail-audit purge
+```
+
+deletes the token, OAuth client, database, and CSVs. Then revoke the app's access at [myaccount.google.com/permissions](https://myaccount.google.com/permissions), and `ollama rm <model>` if you no longer want the weights.
+
+### Prompt injection
+
+Email content is untrusted input fed to a local model, so a hostile email could at worst distort its own row in your local report (a wrong merchant name or risk label). It cannot exfiltrate anything: the models have no tools, no network access, and the output is only ever written to your local SQLite/CSVs.
 
 ## License
 

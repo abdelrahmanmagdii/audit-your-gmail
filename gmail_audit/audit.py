@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
+from gmail_audit.recommend import ollama_base_url
+
 
 # ============================================================
 # CONFIG
@@ -30,8 +32,6 @@ DB_PATH = "subscription_audit_v2.db"
 REPORT_CSV = "subscription_report.csv"
 TIMELINE_CSV = "subscription_timeline.csv"
 _PATHS_BOUND = False
-
-OLLAMA_URL = "http://localhost:11434/api/chat"
 
 # Stage 1 default: Ollama (macOS / Windows / Linux).
 # MLX is optional on Apple Silicon (`gmail-audit run --backend mlx`).
@@ -62,6 +62,10 @@ MAX_DEEP_BODY_CHARS = 6000
 
 # Gmail search intentionally remains reasonably broad.
 # Local Stage 1 does the intelligent filtering.
+#
+# The phrases are English. For inboxes in other languages, set
+# "search_query" in config.json with translated phrases (same Gmail
+# query syntax) — Stage 1 and 2 then screen whatever it matches.
 SEARCH_QUERY = """
 newer_than:5y {
     "subscription"
@@ -184,6 +188,7 @@ def apply_runtime_config(
     global DEEP_MODEL
     global FAST_MLX_MODEL
     global MESSAGE_LIMIT
+    global SEARCH_QUERY
     global _RUNTIME_CONFIG_APPLIED
 
     saved = None
@@ -218,6 +223,8 @@ def apply_runtime_config(
         )
         if saved.get("mlx_model"):
             FAST_MLX_MODEL = saved["mlx_model"]
+        if saved.get("search_query"):
+            SEARCH_QUERY = saved["search_query"]
     elif recommended:
         FAST_OLLAMA_MODEL = recommended["fast_model"]
         DEEP_MODEL = recommended["deep_model"]
@@ -265,7 +272,12 @@ def get_gmail_service():
     from google.auth.transport.requests import Request
     from googleapiclient.discovery import build
 
-    from gmail_audit.oauth import explain_gmail_error, inspect_oauth_json
+    from gmail_audit.oauth import (
+        explain_gmail_error,
+        inspect_oauth_json,
+        is_invalid_grant
+    )
+    from gmail_audit.paths import write_private_file
 
     kind, _payload = inspect_oauth_json(CREDENTIALS_FILE)
 
@@ -282,18 +294,45 @@ def get_gmail_service():
 
     try:
         if os.path.exists(TOKEN_FILE):
-            creds = Credentials.from_authorized_user_file(
-                TOKEN_FILE,
-                SCOPES
-            )
+            try:
+                creds = Credentials.from_authorized_user_file(
+                    TOKEN_FILE,
+                    SCOPES
+                )
+            except (ValueError, KeyError):
+                # Corrupt token file: fall through to a fresh sign-in.
+                creds = None
 
         if not creds or not creds.valid:
 
             if creds and creds.expired and creds.refresh_token:
                 print("Refreshing Gmail authentication...")
-                creds.refresh(Request())
 
-            else:
+                try:
+                    creds.refresh(Request())
+                except Exception as error:
+                    if not is_invalid_grant(error):
+                        raise
+
+                    # Testing-status OAuth apps expire refresh tokens
+                    # after 7 days. Recover in the same run instead of
+                    # dumping the raw error.
+                    print()
+                    print(
+                        "The saved Gmail token has expired. This is "
+                        "normal: Google expires tokens after 7 days "
+                        "while the OAuth app is in Testing."
+                    )
+                    print("Signing in again...")
+
+                    try:
+                        os.remove(TOKEN_FILE)
+                    except OSError:
+                        pass
+
+                    creds = None
+
+            if not creds or not creds.valid:
                 print("Opening Google authentication...")
 
                 flow = InstalledAppFlow.from_client_secrets_file(
@@ -303,8 +342,10 @@ def get_gmail_service():
 
                 creds = flow.run_local_server(port=0)
 
-            with open(TOKEN_FILE, "w") as f:
-                f.write(creds.to_json())
+            write_private_file(
+                TOKEN_FILE,
+                creds.to_json()
+            )
 
         return build(
             "gmail",
@@ -628,7 +669,7 @@ def call_ollama(
         try:
 
             response = requests.post(
-                OLLAMA_URL,
+                ollama_base_url() + "/api/chat",
                 json={
                     "model": model,
                     "stream": False,
@@ -744,7 +785,7 @@ def unload_ollama(model=None):
     for name in names:
         try:
             requests.post(
-                "http://localhost:11434/api/generate",
+                ollama_base_url() + "/api/generate",
                 json={
                     "model": name,
                     "prompt": "",
@@ -1998,6 +2039,7 @@ def run_deep_analysis(
 
     processed = 0
     started = time.monotonic()
+    consecutive_failures = 0
 
     for preview_batch in chunks(
         pending,
@@ -2094,6 +2136,8 @@ def run_deep_analysis(
 
             conn.commit()
 
+            consecutive_failures = 0
+
             processed += len(
                 full_emails
             )
@@ -2116,6 +2160,23 @@ def run_deep_analysis(
                 f"{error}"
             )
 
+            # Each failed batch already burned its retries. If Ollama
+            # is down or hung, don't grind through every remaining
+            # batch at up to 15 minutes apiece.
+            consecutive_failures += 1
+
+            if consecutive_failures >= 3:
+                print()
+                print(
+                    "Three batches in a row failed. Ollama looks "
+                    "down or stuck."
+                )
+                print(
+                    "Progress is saved. Re-run `gmail-audit run` "
+                    "to resume Stage 2."
+                )
+                break
+
 
 # ============================================================
 # REPORT GENERATION
@@ -2133,13 +2194,13 @@ def normalize_merchant(name):
     if not name:
         return "Unknown"
 
-    name = name.strip()
-
-    return re.sub(
+    name = re.sub(
         r"\s+",
         " ",
         name
-    )
+    ).strip()
+
+    return name or "Unknown"
 
 
 def get_all_analysis(conn):

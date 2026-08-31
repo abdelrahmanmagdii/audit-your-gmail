@@ -2,7 +2,12 @@ import json
 import os
 from pathlib import Path
 
-from gmail_audit.paths import CREDENTIALS_NAME, data_dir, ensure_data_dir
+from gmail_audit.paths import (
+    CREDENTIALS_NAME,
+    data_dir,
+    ensure_data_dir,
+    write_private_file
+)
 
 
 def downloads_dirs():
@@ -123,17 +128,32 @@ def import_desktop_credentials(dest=None):
     if source.resolve() == dest.resolve():
         return str(dest)
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
     with open(source, encoding="utf-8") as handle:
         payload = handle.read()
 
-    with open(dest, "w", encoding="utf-8") as handle:
-        handle.write(payload)
+    write_private_file(dest, payload)
 
     print(f"Imported Desktop client from {source}")
     print(f"Saved {dest}")
     return str(dest)
+
+
+def is_invalid_grant(error):
+    """
+    True when the refresh token itself is dead (revoked, or expired —
+    Google kills refresh tokens of Testing-status apps after 7 days).
+    """
+
+    text = f"{type(error).__name__}: {error}".lower()
+
+    return any(
+        needle in text
+        for needle in (
+            "invalid_grant",
+            "expired or revoked",
+            "token has been revoked"
+        )
+    )
 
 
 def explain_gmail_error(error, token_path=None):
@@ -144,7 +164,16 @@ def explain_gmail_error(error, token_path=None):
     print()
     print("Gmail sign-in failed.")
 
-    if any(
+    if is_invalid_grant(error):
+        print(
+            "The saved token is expired or revoked. Google expires "
+            "refresh tokens after 7 days while the OAuth app is in "
+            "Testing (which is where it should stay)."
+        )
+        print("Delete the token and sign in again:")
+        print(f"  rm \"{token_path}\"")
+        print("  gmail-audit run")
+    elif any(
         needle in text
         for needle in (
             "access_denied",

@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 apple = ["mlx", "mlx-lm"]
+dev = ["pytest"]
 
 [project.scripts]
 gmail-audit = "gmail_audit.cli:main"
@@ -40,5 +41,4 @@ Repository = "https://github.com/abdelrahmanmagdii/audit-your-gmail"
 Issues = "https://github.com/abdelrahmanmagdii/audit-your-gmail/issues"
 
 [tool.setuptools]
-py-modules = ["audit_email"]
 packages = ["gmail_audit"]
